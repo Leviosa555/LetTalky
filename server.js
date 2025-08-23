@@ -558,6 +558,23 @@ app.use((error, req, res, next) => {
     });
 });
 
+// Add this to your existing server.js
+const { ExpressPeerServer } = require('peer');
+
+// Create PeerJS server
+const peerServer = ExpressPeerServer(server, {
+  debug: true,
+  path: '/peerjs',
+  allow_discovery: true,
+  proxied: true // Important for deployment behind proxy
+});
+
+app.use('/peerjs', peerServer);
+
+// Add to your package.json dependencies
+// "peer": "^1.5.4"
+
+
 // Start server
 const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () => {
