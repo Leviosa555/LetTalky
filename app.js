@@ -14,8 +14,15 @@ class LetTalkyApp {
         this.discoveryInterval = null;
         this.messageQueue = new Map();
         this.fileTransfers = new Map();
+        if (window.location.hostname === 'localhost') {
+            this.debugMode = true;
+        }
+        if (this.isMobileDevice()) {
+            this.initializeMobileFeatures();
+        }
         this.selectedFile = null;
         this.notificationTimeout = null;
+        this.fileTransfers = new Map();
 
         // Enhanced settings with better defaults
         this.settings = {
@@ -93,7 +100,11 @@ class LetTalkyApp {
         const backBtn = document.getElementById('backBtn');
         if (backBtn) {
             backBtn.addEventListener('click', () => {
-                this.closeChatInterface();
+                if (this.isMobileDevice()) {
+                    this.handleMobileBackButton();
+                } else {
+                    this.closeChatInterface();
+                }
             });
         }
 
@@ -272,7 +283,9 @@ class LetTalkyApp {
 
         // Handle window resize for responsive adjustments
         window.addEventListener('resize', () => {
-            this.handleResize();
+            if (this.isMobileDevice()) {
+                this.handleMobileOrientationChange();
+            }
         });
     }
 
@@ -666,6 +679,15 @@ class LetTalkyApp {
     async connectToUser(peerId, username, avatar, distance = '0m') {
         console.log('User clicked on:', { peerId, username, avatar });
         
+        // Check if already connected to this peer
+        const existingConnection = this.connections.get(peerId);
+        if (existingConnection && existingConnection.open) {
+            console.log('✅ Already connected to:', username, '- Opening chat directly');
+            this.openChatInterface(peerId, username, avatar);
+            this.showNotification(`Reopened chat with ${username}`, 'success');
+            return;
+        }
+        
         // Store the target user info for the modal
         this.pendingConnectionRequest = {
             peerId,
@@ -674,9 +696,46 @@ class LetTalkyApp {
             distance
         };
         
-        // Show confirmation dialog
+        // Show confirmation dialog for new connections
         this.showConnectionRequestDialog(username, avatar, distance);
     }
+    
+        // Add this method to store user information with connections
+    storeUserConnection(peerId, connection, userInfo) {
+        this.connections.set(peerId, connection);
+        
+        // Store user info for future reference
+        if (!this.userInfoCache) {
+            this.userInfoCache = new Map();
+        }
+        this.userInfoCache.set(peerId, userInfo);
+        
+        console.log('🔗 Stored connection for:', userInfo.username);
+    }
+
+    // Add this method to get cached user info
+    getCachedUserInfo(peerId) {
+        if (!this.userInfoCache) {
+            return null;
+        }
+        return this.userInfoCache.get(peerId);
+    }
+
+    // Add this method to check connection status
+    isConnectedToPeer(peerId) {
+        const connection = this.connections.get(peerId);
+        return connection && connection.open;
+    }
+
+    // Add this method to clean up closed connections
+    cleanupConnection(peerId) {
+        this.connections.delete(peerId);
+        if (this.userInfoCache) {
+            this.userInfoCache.delete(peerId);
+        }
+        console.log('🗑️ Cleaned up connection for:', peerId);
+    }
+
     
     showConnectionRequestDialog(username, avatar, distance) {
         const modal = document.getElementById('connectionRequestModal');
@@ -693,6 +752,7 @@ class LetTalkyApp {
         }
     }
     
+        // Update your sendConnectionRequest method
     async sendConnectionRequest() {
         if (!this.pendingConnectionRequest) return;
         
@@ -703,14 +763,14 @@ class LetTalkyApp {
             this.hideConnectionRequestDialog();
             return;
         }
-    
+
         try {
             // Visual feedback
             const userItem = document.querySelector(`[data-peer-id="${peerId}"]`);
             if (userItem) {
                 userItem.classList.add('pending-request');
             }
-    
+
             this.showNotification(`Sending connection request to ${username}...`, 'info');
             
             // Create connection
@@ -721,7 +781,15 @@ class LetTalkyApp {
             
             connection.on('open', () => {
                 console.log('✅ Connection opened with:', peerId);
-                this.connections.set(peerId, connection);
+                
+                // Store connection with user info
+                const userInfo = {
+                    peerId,
+                    username,
+                    avatar,
+                    connectedAt: Date.now()
+                };
+                this.storeUserConnection(peerId, connection, userInfo);
                 this.setupConnectionEventListeners(connection);
                 
                 // Send connection request
@@ -740,7 +808,7 @@ class LetTalkyApp {
                 console.log('📤 Connection request sent to:', username);
                 this.showNotification(`Connection request sent to ${username}`, 'success');
             });
-    
+
             connection.on('error', (error) => {
                 console.error('❌ Connection error:', error);
                 this.showNotification(`Failed to send request to ${username}`, 'error');
@@ -748,27 +816,28 @@ class LetTalkyApp {
                     userItem.classList.remove('pending-request');
                 }
             });
-    
+
             connection.on('close', () => {
                 console.log('🔌 Connection closed with:', peerId);
-                this.connections.delete(peerId);
+                this.cleanupConnection(peerId);
                 if (userItem) {
                     userItem.classList.remove('pending-request', 'connected');
                 }
             });
-    
+
             // Hide the dialog
             this.hideConnectionRequestDialog();
             
             // Clear pending request
             this.pendingConnectionRequest = null;
-    
+
         } catch (error) {
             console.error('Error sending connection request:', error);
             this.showNotification('Failed to send connection request', 'error');
             this.hideConnectionRequestDialog();
         }
     }
+
     
     hideConnectionRequestDialog() {
         const modal = document.getElementById('connectionRequestModal');
@@ -839,6 +908,15 @@ class LetTalkyApp {
         
         console.log('✅ Accepting connection request from:', sender.username);
         
+        // Store connection with user info
+        const userInfo = {
+            peerId: sender.peerId,
+            username: sender.username,
+            avatar: sender.avatar,
+            connectedAt: Date.now()
+        };
+        this.storeUserConnection(sender.peerId, connection, userInfo);
+        
         // Send acceptance response
         if (connection && connection.open) {
             connection.send({
@@ -866,6 +944,7 @@ class LetTalkyApp {
         this.showNotification(`Connected to ${sender.username}!`, 'success');
         this.hideIncomingRequestDialog();
     }
+    
     
     declineIncomingRequest() {
         if (!this.incomingConnectionRequest) return;
@@ -1055,9 +1134,447 @@ class LetTalkyApp {
             this.showNotification('No connection available. Please reconnect.', 'error');
         }
     }
+
+    //Mobile function
+
+        // =============================================================================
+    // MOBILE-SPECIFIC FUNCTIONS ONLY
+    // =============================================================================
+
+    // 1. Mobile Device Detection
+    isMobileDevice() {
+        return window.innerWidth <= 768;    
+    }
+
+    // 2. Mobile Navigation State Management
+    initializeMobileState() {
+        this.mobileNavState = 'users'; // 'users' or 'chat'
+        this.isMobile = this.isMobileDevice();
+    }
+
+    // 3. Mobile Chat Interface Opening
+    openMobileChatInterface(peerId, username, avatar) {
+        console.log('📱 Opening mobile chat for:', username);
+        
+        this.activeChatUser = { peerId, username, avatar };
+        this.mobileNavState = 'chat';
+        
+        // Update chat header
+        const chatUserName = document.getElementById('chatUserName');
+        const chatUserAvatar = document.getElementById('chatUserAvatar');
+        
+        if (chatUserName) chatUserName.textContent = username;
+        if (chatUserAvatar) chatUserAvatar.textContent = avatar;
+        
+        // Mobile navigation: slide to chat
+        const sidebar = document.querySelector('.sidebar');
+        const chatArea = document.querySelector('.chat-area');
+        const chatInterface = document.getElementById('chatInterface');
+        
+        if (sidebar) {
+            sidebar.classList.add('chat-open');
+        }
+        
+        if (chatArea) {
+            chatArea.classList.add('active');
+            chatArea.style.display = 'flex';
+        }
+        
+        if (chatInterface) {
+            chatInterface.style.display = 'flex';
+            chatInterface.classList.add('active');
+        }
+        
+        // Clear messages and focus input
+        this.clearMessages();
+        
+        setTimeout(() => {
+            const messageInput = document.getElementById('messageInput');
+            if (messageInput) messageInput.focus();
+        }, 350);
+    }
+
+    // 4. Mobile Chat Interface Closing
+    closeMobileChatInterface() {
+        console.log('📱 Closing mobile chat');
+        
+        this.activeChatUser = null;
+        this.mobileNavState = 'users';
+        
+        // Mobile navigation: slide back to users
+        const sidebar = document.querySelector('.sidebar');
+        const chatArea = document.querySelector('.chat-area');
+        const chatInterface = document.getElementById('chatInterface');
+        
+        if (sidebar) {
+            sidebar.classList.remove('chat-open');
+        }
+        
+        if (chatArea) {
+            chatArea.classList.remove('active');
+            setTimeout(() => {
+                chatArea.style.display = 'none';
+            }, 300);
+        }
+        
+        if (chatInterface) {
+            chatInterface.style.display = 'none';
+            chatInterface.classList.remove('active');
+        }
+    }
+
+    // 5. Mobile Back Button Handler
+    handleMobileBackButton() {
+        console.log('📱 Mobile back button pressed');
+        
+        if (this.mobileNavState === 'chat') {
+            this.closeMobileChatInterface();
+        }
+    }
+
+    // 6. Mobile Orientation Change Handler
+    handleMobileOrientationChange() {
+        const wasMobile = this.isMobile;
+        this.isMobile = this.isMobileDevice();
+        
+        console.log('📱 Orientation changed - Mobile:', this.isMobile);
+        
+        // If switching from/to mobile, adjust interface
+        if (wasMobile !== this.isMobile) {
+            if (this.activeChatUser && this.isMobile) {
+                // Switch to mobile chat layout
+                setTimeout(() => {
+                    this.closeChatInterface(); // Close desktop version
+                    this.openMobileChatInterface(
+                        this.activeChatUser.peerId,
+                        this.activeChatUser.username,
+                        this.activeChatUser.avatar
+                    );
+                }, 100);
+            } else if (this.activeChatUser && !this.isMobile) {
+                // Switch to desktop chat layout
+                setTimeout(() => {
+                    this.closeMobileChatInterface(); // Close mobile version
+                    this.openChatInterface(
+                        this.activeChatUser.peerId,
+                        this.activeChatUser.username,
+                        this.activeChatUser.avatar
+                    );
+                }, 100);
+            }
+        }
+    }
+
+    // 7. Mobile Keyboard Height Adjustment
+    adjustForMobileKeyboard() {
+        if (!this.isMobileDevice()) return;
+        
+        const chatArea = document.querySelector('.chat-area');
+        const messagesContainer = document.getElementById('messagesContainer');
+        
+        // Detect virtual keyboard
+        const viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+        const windowHeight = window.innerHeight;
+        
+        if (viewportHeight < windowHeight * 0.7) {
+            // Keyboard is likely open
+            if (chatArea) {
+                chatArea.style.height = `${viewportHeight}px`;
+            }
+            
+            // Scroll to bottom of messages
+            if (messagesContainer) {
+                setTimeout(() => {
+                    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                }, 100);
+            }
+        } else {
+            // Keyboard is closed
+            if (chatArea) {
+                chatArea.style.height = '100vh';
+            }
+        }
+    }
+
+    // 8. Mobile Touch Gestures
+    initializeMobileTouchGestures() {
+        if (!this.isMobileDevice()) return;
+        
+        let startX = 0;
+        let startY = 0;
+        
+        const chatArea = document.querySelector('.chat-area');
+        if (!chatArea) return;
+        
+        chatArea.addEventListener('touchstart', (e) => {
+            startX = e.touches[0].clientX;
+            startY = e.touches.clientY;
+        });
+        
+        chatArea.addEventListener('touchmove', (e) => {
+            if (this.mobileNavState !== 'chat') return;
+            
+            const currentX = e.touches[0].clientX;
+            const currentY = e.touches.clientY;
+            
+            const deltaX = currentX - startX;
+            const deltaY = Math.abs(currentY - startY);
+            
+            // Swipe right to go back (only if more horizontal than vertical)
+            if (deltaX > 100 && deltaY < 50) {
+                this.closeMobileChatInterface();
+            }
+        });
+    }
+
+    // 9. Mobile Message Input Auto-Resize
+    handleMobileMessageInput(input) {
+        if (!this.isMobileDevice()) return;
+        
+        // Auto-resize textarea
+        input.style.height = 'auto';
+        input.style.height = Math.min(input.scrollHeight, 100) + 'px';
+        
+        // Adjust messages container height
+        const messagesContainer = document.getElementById('messagesContainer');
+        if (messagesContainer) {
+            const inputHeight = input.offsetHeight;
+            const maxInputHeight = 100;
+            const heightDiff = inputHeight - 40; // Default input height
+            
+            if (heightDiff > 0) {
+                messagesContainer.style.marginBottom = `${heightDiff}px`;
+            } else {
+                messagesContainer.style.marginBottom = '0';
+            }
+        }
+    }
+
+    // 10. Mobile Safe Area Handling
+    handleMobileSafeArea() {
+        if (!this.isMobileDevice()) return;
+        
+        const root = document.documentElement;
+        
+        // Set CSS custom properties for safe areas
+        if (window.CSS && CSS.supports && CSS.supports('padding', 'env(safe-area-inset-top)')) {
+            root.style.setProperty('--safe-area-top', 'env(safe-area-inset-top)');
+            root.style.setProperty('--safe-area-bottom', 'env(safe-area-inset-bottom)');
+            root.style.setProperty('--safe-area-left', 'env(safe-area-inset-left)');
+            root.style.setProperty('--safe-area-right', 'env(safe-area-inset-right)');
+        }
+    }
+
+    // 11. Mobile Notification Positioning
+    showMobileNotification(message, type = 'info') {
+        if (!this.isMobileDevice()) return this.showNotification(message, type);
+        
+        // Position notifications at top for mobile
+        const notification = document.createElement('div');
+        notification.className = `notification mobile-notification ${type}`;
+        notification.textContent = message;
+        
+        // Create container if it doesn't exist
+        let container = document.getElementById('mobileNotificationContainer');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'mobileNotificationContainer';
+            container.className = 'mobile-notification-container';
+            document.body.appendChild(container);
+        }
+        
+        container.appendChild(notification);
+        
+        // Show notification
+        setTimeout(() => notification.classList.add('show'), 10);
+        
+        // Remove after delay
+        setTimeout(() => {
+            notification.classList.remove('show');
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 300);
+        }, 3000);
+    }
+
+    // 12. Mobile Haptic Feedback
+    provideMobileHapticFeedback(type = 'light') {
+        if (!this.isMobileDevice()) return;
+        
+        if ('vibrate' in navigator) {
+            switch (type) {
+                case 'light':
+                    navigator.vibrate(50);
+                    break;
+                case 'medium':
+                    navigator.vibrate(100);
+                    break;
+                case 'heavy':
+                    navigator.vibrate(200);
+                    break;
+                case 'success':
+                    navigator.vibrate([100, 50, 100]);
+                    break;
+                case 'error':
+                    navigator.vibrate([200, 100, 200]);
+                    break;
+            }
+        }
+    }
+
+    // 13. Mobile Connection Status Indicator
+    showMobileConnectionStatus(status) {
+        if (!this.isMobileDevice()) return;
+        
+        const indicator = document.getElementById('mobileConnectionStatus') || document.createElement('div');
+        indicator.id = 'mobileConnectionStatus';
+        indicator.className = `mobile-connection-status ${status}`;
+        
+        switch (status) {
+            case 'connecting':
+                indicator.textContent = 'Connecting...';
+                indicator.className += ' connecting';
+                break;
+            case 'connected':
+                indicator.textContent = 'Connected';
+                indicator.className += ' connected';
+                break;
+            case 'disconnected':
+                indicator.textContent = 'Disconnected';
+                indicator.className += ' disconnected';
+                break;
+        }
+        
+        if (!indicator.parentNode) {
+            document.body.appendChild(indicator);
+        }
+        
+        // Auto-hide after 3 seconds for success states
+        if (status === 'connected') {
+            setTimeout(() => {
+                if (indicator.parentNode) {
+                    indicator.style.opacity = '0';
+                    setTimeout(() => {
+                        if (indicator.parentNode) {
+                            indicator.parentNode.removeChild(indicator);
+                        }
+                    }, 300);
+                }
+            }, 3000);
+        }
+    }
+
+    // 14. Mobile Debug Helper
+    debugMobileState() {
+        if (!this.isMobileDevice()) return;
+        
+        console.log('📱 Mobile Debug State:');
+        console.log('- Is Mobile:', this.isMobile);
+        console.log('- Mobile Nav State:', this.mobileNavState);
+        console.log('- Viewport Size:', window.innerWidth, 'x', window.innerHeight);
+        console.log('- Visual Viewport:', window.visualViewport?.width, 'x', window.visualViewport?.height);
+        console.log('- Active Chat User:', this.activeChatUser);
+        console.log('- Chat Area Active:', document.querySelector('.chat-area.active') !== null);
+        console.log('- Sidebar Chat Open:', document.querySelector('.sidebar.chat-open') !== null);
+    }
+
+    // 15. Mobile Initialization
+    initializeMobileFeatures() {
+        if (!this.isMobileDevice()) return;
+        
+        console.log('📱 Initializing mobile features');
+        
+        // Initialize mobile state
+        this.initializeMobileState();
+        
+        // Handle safe areas
+        this.handleMobileSafeArea();
+        
+        // Initialize touch gestures
+        this.initializeMobileTouchGestures();
+        
+        // Listen for viewport changes (keyboard)
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', () => {
+                this.adjustForMobileKeyboard();
+            });
+        }
+        
+        // Listen for orientation changes
+        window.addEventListener('orientationchange', () => {
+            setTimeout(() => {
+                this.handleMobileOrientationChange();
+            }, 100);
+        });
+        
+        // Enhanced message input for mobile
+        const messageInput = document.getElementById('messageInput');
+        if (messageInput) {
+            messageInput.addEventListener('input', () => {
+                this.handleMobileMessageInput(messageInput);
+            });
+        }
+        
+        console.log('✅ Mobile features initialized');
+    }
+
+        // 16. Mobile-Specific Notification for Call Features
+    showMobileNotification(message, type = 'info') {
+        console.log('📱 Mobile notification:', message, type);
+        
+        // Create notification element
+        const notification = document.createElement('div');
+        notification.style.position = 'fixed';
+        notification.style.top = '20px';
+        notification.style.left = '50%';
+        notification.style.transform = 'translateX(-50%)';
+        notification.style.backgroundColor = type === 'error' ? '#ff4444' : 
+                                            type === 'success' ? '#44bb44' : '#4267B2';
+        notification.style.color = 'white';
+        notification.style.padding = '12px 20px';
+        notification.style.borderRadius = '8px';
+        notification.style.fontSize = '14px';
+        notification.style.fontWeight = '600';
+        notification.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+        notification.style.zIndex = '10000';
+        notification.style.maxWidth = '300px';
+        notification.style.textAlign = 'center';
+        notification.textContent = message;
+        
+        // Add to page
+        document.body.appendChild(notification);
+        
+        // Auto-remove after 3 seconds
+        setTimeout(() => {
+            if (notification.parentNode) {
+                document.body.removeChild(notification);
+            }
+        }, 3000);
+        
+        // Add haptic feedback
+        this.provideMobileHapticFeedback('light');
+    }
+
+    // 17. Mobile Voice Call Handler
+    handleMobileVoiceCall() {
+        console.log('📱 Mobile voice call button clicked');
+        this.showMobileNotification('Voice calling feature coming soon!', 'info');
+    }
+
+    // 18. Mobile Video Call Handler  
+    handleMobileVideoCall() {
+        console.log('📱 Mobile video call button clicked');
+        this.showMobileNotification('Video calling feature coming soon!', 'info');
+    }
+    //End Mobile Function
     
 
     openChatInterface(peerId, username, avatar) {
+        if (this.isMobileDevice()) {
+            this.openMobileChatInterface(peerId, username, avatar);
+        } else {
         this.activeChatUser = { peerId, username, avatar };
         
         // Update chat header
@@ -1083,6 +1600,7 @@ class LetTalkyApp {
             setTimeout(() => messageInput.focus(), 100);
         }
     }
+    }
 
     closeChatInterface() {
         this.activeChatUser = null;
@@ -1102,47 +1620,206 @@ class LetTalkyApp {
     sendMessage() {
         const messageInput = document.getElementById('messageInput');
         if (!messageInput || !this.activeChatUser) return;
-
+    
         const message = messageInput.value.trim();
         if (!message && !this.selectedFile) return;
-
-        const messageData = {
-            type: 'message',
-            content: message,
-            timestamp: Date.now(),
-            sender: this.currentUsername,
-            avatar: this.currentAvatar
-        };
-
-        // Add file if selected
-        if (this.selectedFile) {
-            messageData.file = {
-                name: this.selectedFile.name,
-                size: this.selectedFile.size,
-                type: this.selectedFile.type,
-                data: null // File data would be handled separately
-            };
-        }
-
-        // Send to peer
+    
         const connection = this.connections.get(this.activeChatUser.peerId);
-        if (connection && connection.open) {
-            connection.send(messageData);
+        if (!connection || !connection.open) {
+            this.showNotification('No active connection. Please reconnect.', 'error');
+            return;
         }
-
-        // Display in chat
-        this.displayMessage(messageData, 'outgoing');
-
+    
+        // Handle file sending
+        if (this.selectedFile) {
+            this.sendFileSimple(this.selectedFile, connection, message);
+        } else {
+            // Handle text message
+            const messageData = {
+                type: 'message',
+                content: message,
+                timestamp: Date.now(),
+                sender: this.currentUsername,
+                avatar: this.currentAvatar
+            };
+    
+            try {
+                connection.send(messageData);
+                this.displayMessage(messageData, 'outgoing');
+            } catch (error) {
+                this.showNotification('Failed to send message', 'error');
+            }
+        }
+    
         // Clear input
         messageInput.value = '';
         messageInput.style.height = 'auto';
         this.removeFilePreview();
     }
 
+        // Simple and reliable file sending
+    sendFileSimple(file, connection, message = '') {
+        console.log(`📤 Sending file: ${file.name}, size: ${file.size} bytes`);
+        
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const arrayBuffer = e.target.result;
+            
+            // Convert to Base64 for reliable transmission
+            const uint8Array = new Uint8Array(arrayBuffer);
+            let binaryString = '';
+            for (let i = 0; i < uint8Array.length; i++) {
+                binaryString += String.fromCharCode(uint8Array[i]);
+            }
+            const base64Data = btoa(binaryString);
+            
+            const fileData = {
+                type: 'file_transfer',
+                filename: file.name,
+                filetype: file.type,
+                filesize: file.size,
+                filedata: base64Data,
+                message: message,
+                timestamp: Date.now(),
+                sender: this.currentUsername,
+                avatar: this.currentAvatar
+            };
+            
+            try {
+                connection.send(fileData);
+                console.log('✅ File sent successfully');
+                this.showNotification(`File sent: ${file.name}`, 'success');
+                
+                // Show in sender's chat
+                const displayData = {
+                    type: 'file',
+                    filename: file.name,
+                    filetype: file.type,
+                    filesize: file.size,
+                    content: message,
+                    timestamp: Date.now(),
+                    sender: this.currentUsername,
+                    avatar: this.currentAvatar
+                };
+                this.displayFileMessage(displayData, 'outgoing');
+                
+            } catch (error) {
+                console.error('Error sending file:', error);
+                this.showNotification('Failed to send file', 'error');
+            }
+        };
+        
+        reader.onerror = () => {
+            this.showNotification('Error reading file', 'error');
+        };
+        
+        reader.readAsArrayBuffer(file);
+    }
+
+    
+
+        // New method to send files in chunks
+        // Enhanced sendFileInChunks method
+        // Fixed sendFileInChunks method
+        // FIXED - Base64 encoding for reliable transmission
+    sendFileInChunks(file, connection, message = '') {
+        const CHUNK_SIZE = 8192; // Smaller chunks for better reliability
+        let offset = 0;
+        let chunkIndex = 0;
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+        console.log(`📤 Starting file transfer: ${file.name}, size: ${file.size} bytes, chunks: ${totalChunks}`);
+        this.showNotification(`Sending file: ${file.name}...`, 'info');
+
+        const sendNextChunk = () => {
+            if (offset >= file.size) {
+                console.log('✅ All chunks sent successfully');
+                this.showNotification(`File sent: ${file.name}`, 'success');
+                
+                // Display file message in sender's chat
+                const fileMessageData = {
+                    type: 'file',
+                    filename: file.name,
+                    filetype: file.type,
+                    filesize: file.size,
+                    content: message,
+                    timestamp: Date.now(),
+                    sender: this.currentUsername,
+                    avatar: this.currentAvatar
+                };
+                this.displayFileMessage(fileMessageData, 'outgoing');
+                return;
+            }
+
+            const chunk = file.slice(offset, offset + CHUNK_SIZE);
+            const reader = new FileReader();
+
+            reader.onload = (e) => {
+                // Convert ArrayBuffer to Base64 string
+                const arrayBuffer = e.target.result;
+                const bytes = new Uint8Array(arrayBuffer);
+                let binary = '';
+                for (let i = 0; i < bytes.length; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                }
+                const base64String = btoa(binary);
+                
+                const chunkData = {
+                    type: 'file_chunk',
+                    chunk: base64String, // Send as Base64 string
+                    chunkSize: arrayBuffer.byteLength, // Store original size
+                    chunkIndex: chunkIndex,
+                    totalChunks: totalChunks,
+                    filename: file.name,
+                    filetype: file.type,
+                    filesize: file.size,
+                    message: message,
+                    timestamp: Date.now(),
+                    sender: this.currentUsername,
+                    avatar: this.currentAvatar,
+                    isLast: (chunkIndex === totalChunks - 1)
+                };
+
+                try {
+                    connection.send(chunkData);
+                    console.log(`📦 Sent chunk ${chunkIndex + 1}/${totalChunks} (${arrayBuffer.byteLength} bytes)`);
+
+                    chunkIndex++;
+                    offset += CHUNK_SIZE;
+                    
+                    // Small delay to prevent overwhelming
+                    setTimeout(sendNextChunk, 50);
+                } catch (error) {
+                    console.error('Error sending chunk:', error);
+                    this.showNotification('Failed to send file chunk', 'error');
+                }
+            };
+
+            reader.readAsArrayBuffer(chunk);
+        };
+
+        sendNextChunk();
+    }
+
+
     handleIncomingData(peerId, data) {
-        console.log('📨 Processing incoming data from:', peerId, data);
+        if (this.debugMode) {
+            console.log('🔍 DEBUG: Incoming data type:', data.type);
+        }
+        
+        console.log('📨 Processing incoming data from:', peerId, data.type);
         
         switch (data.type) {
+            case 'file_transfer':
+                console.log('📎 Received file transfer:', data.filename);
+                this.handleFileTransfer(peerId, data);
+                break;
+                
+            case 'message':
+                this.displayMessage(data, 'incoming');
+                this.playNotificationSound();
+                break;
+                
             case 'connection_request':
                 this.handleConnectionRequest(data);
                 break;
@@ -1150,37 +1827,12 @@ class LetTalkyApp {
             case 'connection_accepted':
                 console.log('🎉 Connection request accepted!');
                 this.showNotification(`${data.accepter.username} accepted your connection request!`, 'success');
-                
-                // Open chat interface for the sender
                 this.openChatInterface(data.accepter.peerId, data.accepter.username, data.accepter.avatar);
-                
-                // Update UI
-                const userItem = document.querySelector(`[data-peer-id="${data.accepter.peerId}"]`);
-                if (userItem) {
-                    userItem.classList.add('connected');
-                    userItem.classList.remove('pending-request');
-                }
                 break;
                 
             case 'connection_declined':
                 console.log('❌ Connection request declined');
                 this.showNotification(`${data.decliner?.username || 'User'} declined your connection request`, 'info');
-                
-                // Update UI
-                const declinedUserItem = document.querySelector(`[data-peer-id="${data.decliner?.peerId}"]`);
-                if (declinedUserItem) {
-                    declinedUserItem.classList.remove('pending-request');
-                }
-                
-                // Close any open chat with this user
-                if (this.activeChatUser && this.activeChatUser.peerId === peerId) {
-                    this.closeChatInterface();
-                }
-                break;
-                
-            case 'message':
-                this.displayMessage(data, 'incoming');
-                this.playNotificationSound();
                 break;
                 
             case 'typing':
@@ -1192,10 +1844,433 @@ class LetTalkyApp {
                 break;
                 
             default:
-                console.log('❓ Unknown data type:', data.type);
+                console.log('❓ Unknown data type:', data.type, data);
         }
     }
     
+        // Handle complete file transfer
+    handleFileTransfer(peerId, data) {
+        try {
+            console.log(`📥 Processing file: ${data.filename}, size: ${data.filesize} bytes`);
+            
+            // Convert Base64 back to ArrayBuffer
+            const binaryString = atob(data.filedata);
+            const arrayBuffer = new ArrayBuffer(binaryString.length);
+            const uint8Array = new Uint8Array(arrayBuffer);
+            
+            for (let i = 0; i < binaryString.length; i++) {
+                uint8Array[i] = binaryString.charCodeAt(i);
+            }
+            
+            // Create blob
+            const blob = new Blob([uint8Array], { type: data.filetype });
+            const fileUrl = URL.createObjectURL(blob);
+            
+            console.log(`✅ File reconstructed: ${blob.size} bytes`);
+            
+            // Create file data for display
+            const fileData = {
+                type: 'file',
+                filename: data.filename,
+                filetype: data.filetype,
+                filesize: blob.size,
+                fileUrl: fileUrl,
+                content: data.message,
+                timestamp: data.timestamp,
+                sender: data.sender,
+                avatar: data.avatar
+            };
+            
+            // Display file message
+            this.displayFileMessage(fileData, 'incoming');
+            this.showNotification(`File received: ${data.filename}`, 'success');
+            this.playNotificationSound();
+            
+        } catch (error) {
+            console.error('❌ Error processing file:', error);
+            this.showNotification('Error receiving file', 'error');
+        }
+    }
+
+    
+    // Enhanced file chunk handling method
+    // FIXED - Base64 decoding for file reconstruction
+    handleFileChunk(peerId, data) {
+        const transferId = `${peerId}_${data.filename}_${data.timestamp}`;
+        
+        // Initialize file transfer tracking if not exists
+        if (!this.fileTransfers.has(transferId)) {
+            this.fileTransfers.set(transferId, {
+                chunks: new Array(data.totalChunks),
+                receivedChunks: 0,
+                expectedChunks: data.totalChunks,
+                filename: data.filename,
+                filetype: data.filetype,
+                filesize: data.filesize,
+                message: data.message,
+                timestamp: data.timestamp,
+                sender: data.sender,
+                avatar: data.avatar
+            });
+            
+            console.log(`📥 Starting file transfer: ${data.filename} (${this.formatFileSize(data.filesize)})`);
+            this.showNotification(`Receiving file: ${data.filename}...`, 'info');
+        }
+
+        const transfer = this.fileTransfers.get(transferId);
+        
+        // Convert Base64 string back to ArrayBuffer
+        if (!transfer.chunks[data.chunkIndex]) {
+            try {
+                const base64String = data.chunk;
+                const binaryString = atob(base64String);
+                const arrayBuffer = new ArrayBuffer(binaryString.length);
+                const uint8Array = new Uint8Array(arrayBuffer);
+                
+                for (let i = 0; i < binaryString.length; i++) {
+                    uint8Array[i] = binaryString.charCodeAt(i);
+                }
+                
+                transfer.chunks[data.chunkIndex] = arrayBuffer;
+                transfer.receivedChunks++;
+                
+                console.log(`📦 Received chunk ${data.chunkIndex + 1}/${transfer.expectedChunks} - Size: ${arrayBuffer.byteLength} bytes`);
+                
+                // Show progress
+                const progress = Math.round((transfer.receivedChunks / transfer.expectedChunks) * 100);
+                console.log(`📊 Progress: ${transfer.receivedChunks}/${transfer.expectedChunks} chunks (${progress}%)`);
+            } catch (error) {
+                console.error('Error decoding chunk:', error);
+                return;
+            }
+        }
+
+        // Check if all chunks received
+        if (data.isLast || transfer.receivedChunks === transfer.expectedChunks) {
+            console.log('✅ All chunks received, reconstructing file...');
+            this.reconstructFile(transferId, transfer);
+        }
+    }
+
+        
+
+    // Enhanced file reconstruction method
+    // FIXED - Simple and reliable file reconstruction
+    reconstructFile(transferId, transfer) {
+        try {
+            console.log('🔧 Reconstructing file:', transfer.filename);
+            
+            // Check all chunks are present
+            for (let i = 0; i < transfer.expectedChunks; i++) {
+                if (!transfer.chunks[i]) {
+                    throw new Error(`Missing chunk ${i}`);
+                }
+            }
+
+            // Calculate total size and create combined buffer
+            let totalSize = 0;
+            for (let i = 0; i < transfer.chunks.length; i++) {
+                totalSize += transfer.chunks[i].byteLength;
+            }
+            
+            const combined = new Uint8Array(totalSize);
+            let offset = 0;
+            
+            for (let i = 0; i < transfer.chunks.length; i++) {
+                const chunk = new Uint8Array(transfer.chunks[i]);
+                combined.set(chunk, offset);
+                offset += chunk.length;
+            }
+
+            console.log(`📏 File reconstructed: ${combined.length} bytes (expected: ${transfer.filesize})`);
+
+            // Create blob
+            const blob = new Blob([combined], { type: transfer.filetype });
+            const fileUrl = URL.createObjectURL(blob);
+            
+            console.log(`✅ Blob created: ${blob.size} bytes`);
+
+            // Create file data for display
+            const fileData = {
+                type: 'file',
+                filename: transfer.filename,
+                filetype: transfer.filetype,
+                filesize: blob.size,
+                fileUrl: fileUrl,
+                content: transfer.message,
+                timestamp: transfer.timestamp,
+                sender: transfer.sender,
+                avatar: transfer.avatar
+            };
+
+            // Display file message
+            this.displayFileMessage(fileData, 'incoming');
+            this.showNotification(`File received: ${transfer.filename} (${this.formatFileSize(blob.size)})`, 'success');
+            this.playNotificationSound();
+
+            // Clean up
+            this.fileTransfers.delete(transferId);
+            
+        } catch (error) {
+            console.error('❌ Error reconstructing file:', error);
+            this.showNotification(`Error receiving file: ${transfer.filename}`, 'error');
+            this.fileTransfers.delete(transferId);
+        }
+    }
+
+
+        // Initialize file transfer when metadata is received
+    initializeFileTransfer(peerId, metadata) {
+        const transferId = `${peerId}_${metadata.fileId}`;
+        
+        console.log(`📥 Initializing file transfer: ${metadata.filename} (${this.formatFileSize(metadata.filesize)})`);
+        
+        this.fileTransfers.set(transferId, {
+            fileId: metadata.fileId,
+            chunks: new Array(metadata.totalChunks).fill(null),
+            receivedChunks: 0,
+            expectedChunks: metadata.totalChunks,
+            filename: metadata.filename,
+            filetype: metadata.filetype,
+            filesize: metadata.filesize,
+            message: metadata.message,
+            timestamp: metadata.timestamp,
+            sender: metadata.sender,
+            avatar: metadata.avatar
+        });
+        
+        this.showNotification(`Receiving file: ${metadata.filename}...`, 'info');
+    }
+
+    // Enhanced file chunk handling
+    handleFileChunk(peerId, data) {
+        const transferId = `${peerId}_${data.fileId}`;
+        const transfer = this.fileTransfers.get(transferId);
+        
+        if (!transfer) {
+            console.error('❌ No transfer found for:', transferId);
+            return;
+        }
+        
+        // Store chunk in correct position
+        if (transfer.chunks[data.chunkIndex] === null) {
+            transfer.chunks[data.chunkIndex] = data.chunk;
+            transfer.receivedChunks++;
+            
+            console.log(`📦 Stored chunk ${data.chunkIndex + 1}/${transfer.expectedChunks} - Size: ${data.chunk.byteLength} bytes`);
+            
+            // Show progress
+            const progress = Math.round((transfer.receivedChunks / transfer.expectedChunks) * 100);
+            console.log(`📊 Progress: ${transfer.receivedChunks}/${transfer.expectedChunks} chunks (${progress}%)`);
+        }
+
+        // Check if all chunks received
+        if (transfer.receivedChunks === transfer.expectedChunks) {
+            console.log('✅ All chunks received, reconstructing file...');
+            this.reconstructAndDisplayFile(transferId, transfer);
+        }
+    }
+
+    
+
+        // Add this method for debugging
+    debugFileTransfer(transferId, transfer) {
+        console.group(`🔍 Debug File Transfer: ${transfer.filename}`);
+        console.log('Transfer ID:', transferId);
+        console.log('Expected chunks:', transfer.expectedChunks);
+        console.log('Received chunks:', transfer.receivedChunks);
+        console.log('Chunks array length:', transfer.chunks.length);
+        
+        // Check each chunk
+        for (let i = 0; i < transfer.chunks.length; i++) {
+            const chunk = transfer.chunks[i];
+            if (chunk) {
+                console.log(`Chunk ${i}:`, {
+                    type: chunk.constructor.name,
+                    size: chunk.byteLength || chunk.length,
+                    isArrayBuffer: chunk instanceof ArrayBuffer,
+                    isUint8Array: chunk instanceof Uint8Array
+                });
+            } else {
+                console.log(`Chunk ${i}: undefined`);
+            }
+        }
+        console.groupEnd();
+    }
+
+    
+
+    // Method to display file messages in chat
+    displayFileMessage(fileData, direction) {
+        const messagesContainer = document.getElementById('messagesContainer');
+        if (!messagesContainer) return;
+    
+        const messageElement = document.createElement('div');
+        messageElement.classList.add('message', direction, 'file-message');
+        
+        const fileIcon = this.getFileIcon(fileData.filetype);
+        const formattedSize = this.formatFileSize(fileData.filesize);
+        
+        let content = `
+            <div class="file-message-container">
+                <div class="file-icon">${fileIcon}</div>
+                <div class="file-info">
+                    <div class="file-name" title="${fileData.filename}">${fileData.filename}</div>
+                    <div class="file-details">${formattedSize}</div>
+                </div>
+                <div class="file-actions">
+                    ${fileData.fileUrl ? `<a href="${fileData.fileUrl}" target="_blank" download="${fileData.filename}" class="file-open-btn">📂 Open</a>` : '<span class="file-open-btn">📂 Sent</span>'}
+                </div>
+            </div>
+            ${fileData.content ? `<div class="message-text">${this.escapeHtml(fileData.content)}</div>` : ''}
+            <div class="message-time">${this.formatTime(fileData.timestamp)}</div>
+        `;
+    
+        messageElement.innerHTML = content;
+        messagesContainer.appendChild(messageElement);
+        
+        // Scroll to bottom
+        requestAnimationFrame(() => {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        });
+    }
+    
+
+    // Method to open received files
+        // Enhanced method to open received files with better cross-browser support
+    openReceivedFile(fileUrl, filename, filetype) {
+        console.log('📂 Opening file:', filename, filetype);
+        
+        if (!fileUrl) {
+            this.showNotification('File not available', 'error');
+            return;
+        }
+
+        try {
+            // Create temporary link element
+            const downloadLink = document.createElement('a');
+            downloadLink.style.display = 'none';
+            downloadLink.href = fileUrl;
+            
+            // Set filename for download
+            downloadLink.download = filename;
+            
+            // Add to document
+            document.body.appendChild(downloadLink);
+            
+            // Handle different file types with multiple fallback methods
+            if (filetype.startsWith('image/') || 
+                filetype.startsWith('video/') || 
+                filetype.startsWith('audio/') ||
+                filetype === 'application/pdf' ||
+                filetype.startsWith('text/')) {
+                
+                // Method 1: Try opening in new tab with proper attributes
+                try {
+                    const newTab = window.open();
+                    if (newTab) {
+                        newTab.document.write(`
+                            <!DOCTYPE html>
+                            <html>
+                            <head>
+                                <title>${filename}</title>
+                                <style>
+                                    body { margin: 0; padding: 0; }
+                                    iframe { width: 100vw; height: 100vh; border: none; }
+                                </style>
+                            </head>
+                            <body>
+                                <iframe src="${fileUrl}"></iframe>
+                            </body>
+                            </html>
+                        `);
+                        newTab.document.close();
+                        
+                        this.showNotification(`Opening ${filename}`, 'success');
+                        
+                        // Clean up after 30 seconds
+                        setTimeout(() => {
+                            document.body.removeChild(downloadLink);
+                            URL.revokeObjectURL(fileUrl);
+                        }, 30000);
+                        
+                    } else {
+                        // Method 2: Fallback - direct navigation with target="_blank"
+                        downloadLink.target = '_blank';
+                        downloadLink.rel = 'noopener noreferrer';
+                        downloadLink.click();
+                        
+                        this.showNotification(`Opening ${filename}`, 'success');
+                        
+                        // Clean up
+                        setTimeout(() => {
+                            document.body.removeChild(downloadLink);
+                            URL.revokeObjectURL(fileUrl);
+                        }, 2000);
+                    }
+                    
+                } catch (error) {
+                    console.error('Failed to open in new tab, falling back to download:', error);
+                    // Method 3: Force download as fallback
+                    downloadLink.click();
+                    this.showNotification(`Downloaded ${filename}`, 'info');
+                    
+                    // Clean up
+                    setTimeout(() => {
+                        document.body.removeChild(downloadLink);
+                        URL.revokeObjectURL(fileUrl);
+                    }, 2000);
+                }
+                
+            } else {
+                // For other file types, always download
+                downloadLink.click();
+                this.showNotification(`Downloaded ${filename}`, 'success');
+                
+                // Clean up
+                setTimeout(() => {
+                    document.body.removeChild(downloadLink);
+                    URL.revokeObjectURL(fileUrl);
+                }, 2000);
+            }
+            
+        } catch (error) {
+            console.error('Error opening file:', error);
+            this.showNotification('Error opening file', 'error');
+            
+            // Try simple download as last resort
+            try {
+                const simpleLink = document.createElement('a');
+                simpleLink.href = fileUrl;
+                simpleLink.download = filename;
+                simpleLink.click();
+            } catch (fallbackError) {
+                console.error('All methods failed:', fallbackError);
+            }
+        }
+    }
+
+
+    // Helper method to get file icon based on type
+    getFileIcon(filetype) {
+        if (filetype.startsWith('image/')) return '🖼️';
+        if (filetype.startsWith('video/')) return '🎥';
+        if (filetype.startsWith('audio/')) return '🎵';
+        if (filetype === 'application/pdf') return '📄';
+        if (filetype.includes('text/')) return '📝';
+        if (filetype.includes('zip') || filetype.includes('rar')) return '🗂️';
+        return '📎';
+    }
+
+    // Enhanced formatFileSize method
+    formatFileSize(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
     
 
     displayMessage(messageData, direction) {
@@ -1281,16 +2356,222 @@ class LetTalkyApp {
     }
 
     handleFileSelection(file) {
-        // Validate file size (max 10MB)
-        const maxSize = 10 * 1024 * 1024;
+        // Validate file size (max 50MB for better compatibility)
+        const maxSize = 50 * 1024 * 1024; // 50MB
         if (file.size > maxSize) {
-            this.showNotification('File size must be less than 10MB', 'error');
+            this.showNotification('File size must be less than 50MB', 'error');
             return;
         }
-
+    
         this.selectedFile = file;
         this.showFilePreview(file);
     }
+
+        // Alternative: Update displayFileMessage to use direct click approach
+    displayFileMessage(fileData, direction) {
+        const messagesContainer = document.getElementById('messagesContainer');
+        if (!messagesContainer) return;
+
+        const messageElement = document.createElement('div');
+        messageElement.classList.add('message', direction, 'file-message');
+        
+        const fileIcon = this.getFileIcon(fileData.filetype);
+        const formattedSize = this.formatFileSize(fileData.filesize);
+        
+        let content = `
+            <div class="file-message-container">
+                <div class="file-icon">${fileIcon}</div>
+                <div class="file-info">
+                    <div class="file-name" title="${fileData.filename}">${fileData.filename}</div>
+                    <div class="file-details">${formattedSize} • ${fileData.filetype}</div>
+                </div>
+                <div class="file-actions">
+                    <a href="${fileData.fileUrl}" 
+                    target="_blank" 
+                    download="${fileData.filename}"
+                    class="file-open-btn"
+                    onclick="app.trackFileOpen('${fileData.filename}')"
+                    title="Click to open/download file">
+                        📂 Open
+                    </a>
+                </div>
+            </div>
+            ${fileData.content ? `<div class="message-text">${this.escapeHtml(fileData.content)}</div>` : ''}
+            <div class="message-time">${this.formatTime(fileData.timestamp)}</div>
+        `;
+
+        messageElement.innerHTML = content;
+        messagesContainer.appendChild(messageElement);
+        
+        // Scroll to bottom
+        requestAnimationFrame(() => {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        });
+    }
+
+    // Add tracking method
+    trackFileOpen(filename) {
+        console.log('📂 User opened file:', filename);
+        this.showNotification(`Opening ${filename}`, 'info');
+    }
+
+    
+
+    reconstructAndDisplayFile(transferId, transfer) {
+        try {
+            console.log('🔧 Reconstructing file:', transfer.filename);
+            
+            // Filter out any undefined chunks and convert to Uint8Array
+            const validChunks = transfer.chunks
+                .filter(chunk => chunk !== undefined)
+                .map(chunk => {
+                    if (chunk instanceof ArrayBuffer) {
+                        return new Uint8Array(chunk);
+                    } else if (chunk instanceof Uint8Array) {
+                        return chunk;
+                    } else {
+                        // Handle other formats if needed
+                        console.warn('Unexpected chunk format:', typeof chunk);
+                        return new Uint8Array();
+                    }
+                });
+    
+            // Calculate total size
+            const totalSize = validChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+            console.log(`📏 Total file size: ${totalSize} bytes`);
+    
+            // Combine all chunks
+            const combined = new Uint8Array(totalSize);
+            let offset = 0;
+            
+            for (const chunk of validChunks) {
+                combined.set(chunk, offset);
+                offset += chunk.length;
+            }
+    
+            // Create blob
+            const blob = new Blob([combined], { type: transfer.filetype });
+            const fileUrl = URL.createObjectURL(blob);
+    
+            console.log('✅ File reconstructed successfully:', transfer.filename);
+    
+            // Create file data for display
+            const fileData = {
+                type: 'file',
+                filename: transfer.filename,
+                filetype: transfer.filetype,
+                filesize: transfer.filesize,
+                fileUrl: fileUrl,
+                content: transfer.message,
+                timestamp: transfer.timestamp,
+                sender: transfer.sender,
+                avatar: transfer.avatar
+            };
+    
+            // Display file message in chat
+            this.displayFileMessage(fileData, 'incoming');
+            this.showNotification(`File received: ${transfer.filename}`, 'success');
+            this.playNotificationSound();
+    
+            // Clean up transfer data
+            this.fileTransfers.delete(transferId);
+            
+        } catch (error) {
+            console.error('❌ Error reconstructing file:', error);
+            this.showNotification(`Error receiving file: ${transfer.filename}`, 'error');
+            this.fileTransfers.delete(transferId);
+        }
+    }
+    
+    openReceivedFile(fileUrl, filename, filetype) {
+        console.log('📂 Opening file:', filename, filetype);
+        
+        if (!fileUrl) {
+            this.showNotification('File not available', 'error');
+            return;
+        }
+    
+        try {
+            // For viewable files, open in new tab
+            if (filetype.startsWith('image/') || 
+                filetype.startsWith('video/') || 
+                filetype.startsWith('audio/') ||
+                filetype === 'application/pdf' ||
+                filetype.startsWith('text/')) {
+                
+                window.open(fileUrl, '_blank');
+                this.showNotification(`Opening ${filename}`, 'success');
+                
+            } else {
+                // For other files, trigger download
+                const downloadLink = document.createElement('a');
+                downloadLink.href = fileUrl;
+                downloadLink.download = filename;
+                downloadLink.style.display = 'none';
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                document.body.removeChild(downloadLink);
+                
+                this.showNotification(`Downloading ${filename}`, 'success');
+            }
+        } catch (error) {
+            console.error('Error opening file:', error);
+            this.showNotification('Error opening file', 'error');
+        }
+    }
+    
+
+    // Method to open received files
+    openFile(fileUrl, filename, filetype) {
+        if (!fileUrl) {
+            this.showNotification('File not available', 'error');
+            return;
+        }
+
+        try {
+            // For images, videos, and PDFs, open in new tab
+            if (filetype.startsWith('image/') || 
+                filetype.startsWith('video/') || 
+                filetype === 'application/pdf') {
+                window.open(fileUrl, '_blank');
+            } else {
+                // For other files, trigger download
+                const downloadLink = document.createElement('a');
+                downloadLink.href = fileUrl;
+                downloadLink.download = filename;
+                downloadLink.style.display = 'none';
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                document.body.removeChild(downloadLink);
+            }
+            
+            this.showNotification(`Opening ${filename}`, 'success');
+        } catch (error) {
+            console.error('Error opening file:', error);
+            this.showNotification('Error opening file', 'error');
+        }
+    }
+
+    // Helper method to get file icon based on type
+    getFileIcon(filetype) {
+        if (filetype.startsWith('image/')) return '🖼️';
+        if (filetype.startsWith('video/')) return '🎥';
+        if (filetype.startsWith('audio/')) return '🎵';
+        if (filetype === 'application/pdf') return '📄';
+        if (filetype.includes('text/')) return '📝';
+        if (filetype.includes('zip') || filetype.includes('rar')) return '🗂️';
+        return '📎';
+    }
+
+    // Enhanced formatFileSize method
+    formatFileSize(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
 
     showFilePreview(file) {
         const filePreview = document.getElementById('filePreview');
@@ -1457,14 +2738,28 @@ class LetTalkyApp {
     }
 
     handleVoiceCall() {
-        this.showNotification('Voice calling feature coming soon!', 'info');
+        console.log('🎤 Voice call button clicked, mobile:', this.isMobileDevice());
+        
+        if (this.isMobileDevice()) {
+            this.handleMobileVoiceCall();
+        } else {
+            this.showNotification('Voice calling feature coming soon!', 'info');
+        }
     }
 
     handleVideoCall() {
-        this.showNotification('Video calling feature coming soon!', 'info');
+        console.log('📹 Video call button clicked, mobile:', this.isMobileDevice());
+        
+        if (this.isMobileDevice()) {
+            this.handleMobileVideoCall();
+        } else {
+            this.showNotification('Video calling feature coming soon!', 'info');
+        }
     }
 
-    showNotification(message, type = 'info', duration = 4000) {
+    showNotification(message, type = 'info', duration = 4000) { if (this.isMobileDevice()) {
+        this.showMobileNotification(message, type);
+    } else {
         const container = document.getElementById('notificationContainer');
         if (!container) return;
     
@@ -1494,6 +2789,7 @@ class LetTalkyApp {
                 }
             }, 300);
         }, duration);
+    }
     }
     
 
