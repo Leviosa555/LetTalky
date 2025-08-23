@@ -1,3 +1,4 @@
+const { ExpressPeerServer } = require('peer'); // Move this to top
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
@@ -559,26 +560,23 @@ app.use((error, req, res, next) => {
 });
 
 // Add this to your existing server.js
-const { ExpressPeerServer } = require('peer');
+// CREATE HTTP SERVER FIRST (before using it)
+const PORT = process.env.PORT || 3000;
+const server = require('http').createServer(app);
 
-// Create PeerJS server
+// NOW create PeerJS server using the initialized server
 const peerServer = ExpressPeerServer(server, {
   debug: true,
   path: '/peerjs',
   allow_discovery: true,
-  proxied: true // Important for deployment behind proxy
+  proxied: true
 });
 
 app.use('/peerjs', peerServer);
 
-// Add to your package.json dependencies
-// "peer": "^1.5.4"
-
-
-// Start server
-const PORT = process.env.PORT || 3000;
-const server = app.listen(PORT, () => {
-    console.log(`
+// START the server
+server.listen(PORT, () => {
+  console.log(`
 🚀 LetTalky Server Started Successfully!
 📍 Local: http://localhost:${PORT}
 🌐 Network: http://0.0.0.0:${PORT}
@@ -589,7 +587,7 @@ const server = app.listen(PORT, () => {
 
 // Handle server shutdown gracefully
 server.on('close', () => {
-    console.log('🛑 LetTalky server closed');
+  console.log('🛑 LetTalky server closed');
 });
 
 module.exports = server;
