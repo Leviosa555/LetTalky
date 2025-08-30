@@ -475,7 +475,7 @@ class LetTalkyApp {
           
           console.log(`🔗 Connecting to public PeerJS server...`);
           
-          // Use public PeerJS server - no need for local PeerJS server
+          // Use public PeerJS server
           this.peer = new Peer(peerId, {
             config: {
               iceServers: [
@@ -520,8 +520,6 @@ class LetTalkyApp {
         });
     }
       
-      
-
 
     setupPeerEventListeners() {
         this.peer.on('connection', (conn) => {
