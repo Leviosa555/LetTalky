@@ -471,52 +471,57 @@ class LetTalkyApp {
 
     async initializePeer() {
         return new Promise((resolve, reject) => {
-            const peerId = `lettalky_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            
-            this.peer = new Peer(peerId, {
-                // Use your own server instead of default cloud
-                host: window.location.hostname, // Uses your domain
-                port: window.location.protocol === 'https:' ? 443 : 80,
-                path: '/peerjs',
-                secure: window.location.protocol === 'https:', // Match your site's protocol
-                config: {
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' },
-                        // Add TURN server for cross-device connectivity
-                        {
-                            urls: 'turn:openrelay.metered.ca:80',
-                            username: 'openrelayproject',
-                            credential: 'openrelayproject'
-                        }
-                    ]
+          const peerId = `lettalky_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          
+          console.log(`🔗 Connecting to public PeerJS server...`);
+          
+          // Use public PeerJS server - no need for local PeerJS server
+          this.peer = new Peer(peerId, {
+            config: {
+              iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                {
+                  urls: 'turn:openrelay.metered.ca:80',
+                  username: 'openrelayproject',
+                  credential: 'openrelayproject'
+                },
+                {
+                  urls: 'turn:openrelay.metered.ca:443',
+                  username: 'openrelayproject',
+                  credential: 'openrelayproject'
                 }
-            });
-    
-            this.peer.on('open', async (id) => {
-                console.log('🔗 Peer connected with ID:', id);
-                try {
-                    await this.registerWithServer();
-                    this.setupPeerEventListeners();
-                    resolve(id);
-                } catch (error) {
-                    reject(error);
-                }
-            });
-    
-            this.peer.on('error', (error) => {
-                console.error('❌ Peer error:', error);
-                reject(error);
-            });
-    
-            setTimeout(() => {
-                if (!this.peer || !this.peer.open) {
-                    reject(new Error('Peer connection timeout - check PeerJS server'));
-                }
-            }, 15000);
+              ]
+            }
+          });
+      
+          this.peer.on('open', async (id) => {
+            console.log('🔗 Peer connected with ID:', id);
+            try {
+              await this.registerWithServer();
+              this.setupPeerEventListeners();
+              resolve(id);
+            } catch (error) {
+              reject(error);
+            }
+          });
+      
+          this.peer.on('error', (error) => {
+            console.error('❌ Peer error:', error);
+            reject(error);
+          });
+      
+          setTimeout(() => {
+            if (!this.peer || !this.peer.open) {
+              reject(new Error('Peer connection timeout - please check your internet connection'));
+            }
+          }, 15000);
         });
     }
-    
+      
+      
+
 
     setupPeerEventListeners() {
         this.peer.on('connection', (conn) => {
